@@ -1,5 +1,11 @@
 package chargingdemoprocs;
 
+import javax.ws.rs.Consumes;
+import javax.ws.rs.POST;
+import javax.ws.rs.Path;
+import javax.ws.rs.PathParam;
+import javax.ws.rs.Produces;
+
 /* This file is part of VoltDB.
  * Copyright (C) 2008-2022 VoltDB Inc.
  *
@@ -27,7 +33,16 @@ import org.voltdb.SQLStmt;
 import org.voltdb.VoltProcedure;
 import org.voltdb.VoltTable;
 
-public class DelUser extends VoltProcedure {
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.enums.ParameterIn;
+import io.swagger.v3.oas.annotations.media.Content;
+import io.swagger.v3.oas.annotations.media.Schema;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import io.swagger.v3.oas.annotations.responses.ApiResponses;
+
+@Path("/delUser")
+public class DelUser extends VoltAPIProcedure {
 
     // @formatter:off
 
@@ -45,13 +60,36 @@ public class DelUser extends VoltProcedure {
      * @return
      * @throws VoltAbortException
      */
-    public VoltTable[] run(long userId) throws VoltAbortException {
+    @POST
+
+    @Consumes({ "application/json;charset=utf-8" })
+    @Produces({ "application/json;charset=utf-8" })
+    @Operation(summary = "Delete User", description = "Delete User", tags = { "chargingdemoprocs" })
+    @ApiResponses(value = {
+            @ApiResponse(responseCode = "0", description = "Deleted", content = @Content(mediaType = "application/json;charset&#x3D;utf-8", schema = @Schema(implementation = String.class))),
+
+            @ApiResponse(responseCode = "1", description = "Not Found", content = @Content(mediaType = "application/json;charset&#x3D;utf-8", schema = @Schema(implementation = String.class))),
+
+            @ApiResponse(responseCode = "3", description = "Other Error", content = @Content(mediaType = "application/json;charset&#x3D;utf-8", schema = @Schema(implementation = Error.class))),
+
+    })
+
+    public VoltTable[] run(
+            @Parameter(in = ParameterIn.PATH, description = "User ID", required = true) @PathParam("userId") long userId)
+            throws VoltAbortException {
 
         voltQueueSQL(delUser, userId);
         voltQueueSQL(delUserUsage, userId);
         voltQueueSQL(delBalance, userId);
         voltQueueSQL(delTxns, userId);
 
-        return voltExecuteSQL(true);
+        VoltTable[] results = voltExecuteSQL(true);
+
+        if (results[0].getLong(0) == 1) {
+            return castObjectToVoltTableArray(null, 0, "User Deleted");
+        }
+
+        return castObjectToVoltTableArray(null, 1, "User Not Found");
+
     }
 }

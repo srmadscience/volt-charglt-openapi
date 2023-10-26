@@ -2,6 +2,12 @@ package chargingdemoprocs;
 
 import java.util.Date;
 
+import javax.ws.rs.Consumes;
+import javax.ws.rs.POST;
+import javax.ws.rs.Path;
+import javax.ws.rs.PathParam;
+import javax.ws.rs.Produces;
+
 /* This file is part of VoltDB.
  * Copyright (C) 2008-2022 VoltDB Inc.
  *
@@ -30,7 +36,21 @@ import org.voltdb.VoltProcedure;
 import org.voltdb.VoltTable;
 import org.voltdb.types.TimestampType;
 
-public class AddCredit extends VoltProcedure {
+
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.enums.ParameterIn;
+import io.swagger.v3.oas.annotations.responses.ApiResponses;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import io.swagger.v3.oas.annotations.media.ArraySchema;
+import io.swagger.v3.oas.annotations.media.Content;
+import io.swagger.v3.oas.annotations.media.Schema;
+import io.swagger.v3.oas.annotations.security.SecurityRequirement;
+
+
+@Path("/addCredit")
+
+public class AddCredit extends VoltAPIProcedure {
 
     // @formatter:off
 
@@ -75,7 +95,24 @@ public class AddCredit extends VoltProcedure {
      * @return Balance and Credit info
      * @throws VoltAbortException
      */
-    public VoltTable[] run(long userId, long extraCredit, String txnId) throws VoltAbortException {
+    
+   @POST
+    
+    @Consumes({ "application/json;charset=utf-8" })
+    @Produces({ "application/json;charset=utf-8" })
+   @Operation(summary = "Adds Credit", description = "Adds Credit", tags={ "chargingdemoprocs" })
+   @ApiResponses(value = { 
+       @ApiResponse(responseCode = "0", description = "Added", content = @Content(mediaType = "application/json;charset&#x3D;utf-8", schema = @Schema(implementation = AddCreditUserStatus.class))),
+       
+       @ApiResponse(responseCode = "1", description = "No Such User", content = @Content(mediaType = "application/json;charset&#x3D;utf-8", schema = @Schema(implementation = String.class))),
+       
+       @ApiResponse(responseCode = "2", description = "Already Addded", content = @Content(mediaType = "application/json;charset&#x3D;utf-8", schema = @Schema(implementation = String.class))),
+       
+    })
+
+    public VoltTable[] run(@Parameter(in = ParameterIn.PATH, description = "User ID",required=true) @PathParam("userId")  long userId
+            , @Parameter(in = ParameterIn.PATH, description = "Credit Delta",required=true) @PathParam("extraCredit")   long extraCredit
+            ,  @Parameter(in = ParameterIn.PATH, description = "Transaction ID",required=true) @PathParam("txnId")  String txnId) throws VoltAbortException {
 
         // See if we know about this user and transaction...
         voltQueueSQL(getUser, userId);
@@ -86,7 +123,7 @@ public class AddCredit extends VoltProcedure {
 
         // Sanity Check: Is this a real user?
         if (!userAndTxn[0].advanceRow()) {
-            throw new VoltAbortException("User " + userId + " does not exist");
+            return castObjectToVoltTableArray(null, 1, "User " + userId + " does not exist");
         }
 
         // Sanity Check: Has this transaction already happened?
@@ -96,6 +133,8 @@ public class AddCredit extends VoltProcedure {
             this.setAppStatusString(
                     "Event already happened at " + userAndTxn[1].getTimestampAsTimestamp("txn_time").toString());
             voltQueueSQL(reportFinancialEvent, userId, extraCredit, txnId, "Credit already added");
+            voltExecuteSQL(true);
+            return castObjectToVoltTableArray(null, 2, "Event already happened at " + userAndTxn[1].getTimestampAsTimestamp("txn_time").toString());
 
         } else {
 
@@ -122,6 +161,7 @@ public class AddCredit extends VoltProcedure {
         voltQueueSQL(getUserBalance, userId);
         voltQueueSQL(getCurrrentlyAllocated, userId);
 
-        return voltExecuteSQL(true);
+        
+        return castObjectToVoltTableArray(new AddCreditUserStatus(voltExecuteSQL(true)), 0, "Credit Added");
     }
 }

@@ -701,7 +701,7 @@ public abstract class BaseChargingDemo {
      * @return Linux process ID
      */
     private static long getPid() {
-        return ProcessHandle.current().pid();
+        return 0l; //TODO.current().pid();
     }
 
     /**

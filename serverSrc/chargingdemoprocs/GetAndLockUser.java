@@ -1,5 +1,10 @@
 package chargingdemoprocs;
 
+import javax.ws.rs.Consumes;
+import javax.ws.rs.POST;
+import javax.ws.rs.Path;
+import javax.ws.rs.Produces;
+
 /* This file is part of VoltDB.
  * Copyright (C) 2008-2022 VoltDB Inc.
  *
@@ -28,7 +33,16 @@ import org.voltdb.VoltProcedure;
 import org.voltdb.VoltTable;
 import org.voltdb.types.TimestampType;
 
-public class GetAndLockUser extends VoltProcedure {
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.media.ArraySchema;
+import io.swagger.v3.oas.annotations.media.Content;
+import io.swagger.v3.oas.annotations.media.Schema;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import io.swagger.v3.oas.annotations.responses.ApiResponses;
+
+@Path("/GetAndLockUser")
+
+public class GetAndLockUser extends VoltAPIProcedure {
 
   // @formatter:off
 
@@ -56,6 +70,15 @@ public class GetAndLockUser extends VoltProcedure {
      * @return lockid (accessibe via ClientStatus.getAppStatusString())
      * @throws VoltAbortException
      */
+    @POST
+    @Consumes({ "application/json;charset=utf-8" })
+    @Produces({ "application/json;charset=utf-8" })
+    @Operation(summary = "GetAndLockUser", description = "GetAndLockUser", tags = { "chargingdemoprocs" })
+    @ApiResponses(value = { 
+            @ApiResponse(responseCode = RESPONSE_VOLT_PROC_OK_STRING, description = "Success", content = @Content(mediaType = "application/json;charset&#x3D;utf-8", array = @ArraySchema(schema = @Schema(implementation = UserObject.class)))),
+            @ApiResponse(responseCode = RESPONSE_VOLT_ALREADY_LOCKED_STRING, description = "Locked", content = @Content(mediaType = "application/json;charset&#x3D;utf-8", schema = @Schema(implementation = String.class))) ,
+    @ApiResponse(responseCode = RESPONSE_VOLT_NOT_FOUND_STRING, description = "Not Found", content = @Content(mediaType = "application/json;charset&#x3D;utf-8", schema = @Schema(implementation = String.class))) })
+
     public VoltTable[] run(long userId) throws VoltAbortException {
 
         voltQueueSQL(getUser, userId);
@@ -70,29 +93,35 @@ public class GetAndLockUser extends VoltProcedure {
         final TimestampType currentTimestamp = new TimestampType(this.getTransactionTime());
         final TimestampType lockingSessionExpiryTimestamp = userRecord[0]
                 .getTimestampAsTimestamp("user_softlock_expiry");
+        
+        byte statusCode;
 
         // If somebody has locked this session and the lock hasn't expired complain...
         if (lockingSessionExpiryTimestamp != null && lockingSessionExpiryTimestamp.compareTo(currentTimestamp) > 0) {
 
             final long lockingSessionId = userRecord[0].getLong("user_softlock_sessionid");
-            this.setAppStatusCode(ReferenceData.STATUS_RECORD_ALREADY_SOFTLOCKED);
+            statusCode = ReferenceData.STATUS_RECORD_ALREADY_SOFTLOCKED;
             this.setAppStatusString("User " + userId + " has already been locked by session " + lockingSessionId);
 
         } else {
             // 'Lock' record
             final long lockingSessionId = getUniqueId();
-            this.setAppStatusCode(ReferenceData.STATUS_RECORD_HAS_BEEN_SOFTLOCKED);
+            statusCode = ReferenceData.STATUS_RECORD_HAS_BEEN_SOFTLOCKED;
 
             // Note how we pass the lock ID back...
             this.setAppStatusString("" + lockingSessionId);
             voltQueueSQL(upsertUserLock, getUniqueId(), ReferenceData.LOCK_TIMEOUT_MS, currentTimestamp, userId);
         }
 
+        this.setAppStatusCode(statusCode);
+        
         voltQueueSQL(getUser, userId);
         voltQueueSQL(getAllTxn, userId);
         voltQueueSQL(getUserUsage, userId);
 
-        return voltExecuteSQL(true);
+        UserObject u = new UserObject(userId,statusCode,voltExecuteSQL(true));
+
+        return castObjectToVoltTableArray(u, statusCode, "Locked");
 
     }
 }

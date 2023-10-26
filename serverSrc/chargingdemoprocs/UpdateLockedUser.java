@@ -1,5 +1,11 @@
 package chargingdemoprocs;
 
+import javax.ws.rs.Consumes;
+import javax.ws.rs.POST;
+import javax.ws.rs.Path;
+import javax.ws.rs.PathParam;
+import javax.ws.rs.Produces;
+
 /* This file is part of VoltDB.
  * Copyright (C) 2008-2022 VoltDB Inc.
  *
@@ -24,6 +30,7 @@ package chargingdemoprocs;
  */
 
 import org.voltdb.SQLStmt;
+
 import org.voltdb.VoltProcedure;
 import org.voltdb.VoltTable;
 import org.voltdb.types.TimestampType;
@@ -31,7 +38,17 @@ import org.voltdb.types.TimestampType;
 import com.google.gson.Gson;
 import com.google.gson.JsonSyntaxException;
 
-public class UpdateLockedUser extends VoltProcedure {
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.enums.ParameterIn;
+import io.swagger.v3.oas.annotations.media.Content;
+import io.swagger.v3.oas.annotations.media.Schema;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import io.swagger.v3.oas.annotations.responses.ApiResponses;
+
+@Path("/UpdateLockedUser")
+
+public class UpdateLockedUser extends VoltAPIProcedure {
 
     // @formatter:off
 
@@ -55,7 +72,27 @@ public class UpdateLockedUser extends VoltProcedure {
      * @return
      * @throws VoltAbortException
      */
-    public VoltTable[] run(long userId, long sessionId, String jsonPayload, String deltaOperationName)
+    @POST
+    @Operation(summary = "UpdateLockedUser", description = "UpdateLockedUser", tags = { "chargingdemoprocs" })
+
+    @Consumes({ "application/json;charset=utf-8" })
+    @Produces({ "application/json;charset=utf-8" })
+    @ApiResponses(value = {
+            @ApiResponse(responseCode = "0", description = "Updated", content = @Content(mediaType = "application/json;charset&#x3D;utf-8", schema = @Schema(implementation = String.class))),
+
+            @ApiResponse(responseCode = "4", description = "Bad JSON", content = @Content(mediaType = "application/json;charset&#x3D;utf-8", schema = @Schema(implementation = String.class))),
+            @ApiResponse(responseCode = "3", description = "Bad Loyalty Card", content = @Content(mediaType = "application/json;charset&#x3D;utf-8", schema = @Schema(implementation = String.class))),
+            @ApiResponse(responseCode = "1", description = "No Such User", content = @Content(mediaType = "application/json;charset&#x3D;utf-8", schema = @Schema(implementation = String.class))),
+
+            @ApiResponse(responseCode = "2", description = "Locked by someone else", content = @Content(mediaType = "application/json;charset&#x3D;utf-8", schema = @Schema(implementation = String.class))),
+
+    })
+
+    public VoltTable[] run(
+            @Parameter(in = ParameterIn.PATH, description = "userId", required = true) @PathParam("userId") long userId,
+            @Parameter(in = ParameterIn.PATH, description = "sessionId", required = true) @PathParam("sessionId") long sessionId,
+            @Parameter(in = ParameterIn.PATH, description = "jsonPayload", required = true) @PathParam("jsonPayload") String jsonPayload,
+            @Parameter(in = ParameterIn.PATH, description = "deltaOperationName", required = true) @PathParam("deltaOperationName") String deltaOperationName)
             throws VoltAbortException {
 
         voltQueueSQL(getUser, userId);
@@ -64,7 +101,7 @@ public class UpdateLockedUser extends VoltProcedure {
 
         // Sanity check: Does this user exist?
         if (!userRecord[0].advanceRow()) {
-            throw new VoltAbortException("User " + userId + " does not exist");
+            return castObjectToVoltTableArray("User " + userId + " does not exist", 1, "");
         }
 
         final long lockingSessionId = userRecord[0].getLong("user_softlock_sessionid");
@@ -84,10 +121,11 @@ public class UpdateLockedUser extends VoltProcedure {
                     eud.loyaltySchemeNumber = Long.parseLong(jsonPayload);
                     newJsonPayload = gson.toJson(eud);
                 } catch (JsonSyntaxException e) {
-                    throw new VoltAbortException("Json syntax exception while working with User " + userId + ", ' "
-                            + oldJsonPayload + "' and '" + jsonPayload);
+                    return castObjectToVoltTableArray("Json syntax exception while working with User " + userId + ", ' "
+                            + oldJsonPayload + "' and '" + jsonPayload, 4, "");
                 } catch (NumberFormatException e) {
-                    throw new VoltAbortException("Invalid loyalty card number: '" + jsonPayload);
+
+                    return castObjectToVoltTableArray("Invalid loyalty card number: '" + jsonPayload, 3, "");
                 }
 
             }
@@ -95,16 +133,16 @@ public class UpdateLockedUser extends VoltProcedure {
             voltQueueSQL(removeUserLockAndUpdateJSON, newJsonPayload, userId);
             this.setAppStatusCode(ReferenceData.STATUS_OK);
             this.setAppStatusString("User " + userId + " updated");
-
-        } else {
-
-            this.setAppStatusCode(ReferenceData.STATUS_RECORD_HAS_BEEN_SOFTLOCKED);
-            this.setAppStatusString("User " + userId + " currently locked by session " + lockingSessionId
-                    + ". Expires at " + lockingSessionExpiryTimestamp.toString());
+            return castObjectToVoltTableArray("User " + userId + " updated", 0, "");
 
         }
 
-        return voltExecuteSQL(true);
+        this.setAppStatusCode(ReferenceData.STATUS_RECORD_HAS_BEEN_SOFTLOCKED);
+        this.setAppStatusString("User " + userId + " currently locked by session " + lockingSessionId + ". Expires at "
+                + lockingSessionExpiryTimestamp.toString());
+
+        return castObjectToVoltTableArray("User " + userId + " currently locked by session " + lockingSessionId
+                + ". Expires at " + lockingSessionExpiryTimestamp.toString(), 2, "");
 
     }
 }

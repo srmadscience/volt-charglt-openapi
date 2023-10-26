@@ -1,5 +1,11 @@
 package chargingdemoprocs;
 
+import javax.ws.rs.Consumes;
+import javax.ws.rs.POST;
+import javax.ws.rs.Path;
+import javax.ws.rs.PathParam;
+import javax.ws.rs.Produces;
+
 /* This file is part of VoltDB.
  * Copyright (C) 2008-2022 VoltDB Inc.
  *
@@ -27,11 +33,22 @@ import org.voltdb.SQLStmt;
 import org.voltdb.VoltProcedure;
 import org.voltdb.VoltTable;
 
-public class ReportQuotaUsage extends VoltProcedure {
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.enums.ParameterIn;
+import io.swagger.v3.oas.annotations.media.Content;
+import io.swagger.v3.oas.annotations.media.Schema;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import io.swagger.v3.oas.annotations.responses.ApiResponses;
+
+@Path("/ReportQuotaUsage")
+
+public class ReportQuotaUsage extends VoltAPIProcedure {
 
     // @formatter:off
 
-	public static final SQLStmt getUser = new SQLStmt(
+
+   public static final SQLStmt getUser = new SQLStmt(
 			"SELECT userid FROM user_table WHERE userid = ?;");
 
     public static final SQLStmt removeOldestTransaction = new SQLStmt("DELETE "
@@ -59,9 +76,22 @@ public class ReportQuotaUsage extends VoltProcedure {
 
 	public static final SQLStmt createAllocation = new SQLStmt("INSERT INTO user_usage_table "
 			+ "(userid, allocated_amount,sessionid, lastdate) VALUES (?,?,?,NOW);");
-
+  
 
 	// @formatter:on
+    @POST
+    @Operation(summary = "Spends Credit", description = "Spends Credit", tags = { "chargingdemoprocs" })
+
+    @Consumes({ "application/json;charset=utf-8" })
+    @Produces({ "application/json;charset=utf-8" })
+    @ApiResponses(value = {
+            @ApiResponse(responseCode = "0", description = "Reported", content = @Content(mediaType = "application/json;charset&#x3D;utf-8", schema = @Schema(implementation = ReportQuotaUsageStatus.class))),
+
+            @ApiResponse(responseCode = "1", description = "No Such User", content = @Content(mediaType = "application/json;charset&#x3D;utf-8", schema = @Schema(implementation = String.class))),
+
+            @ApiResponse(responseCode = "2", description = "Already Done", content = @Content(mediaType = "application/json;charset&#x3D;utf-8", schema = @Schema(implementation = String.class))),
+
+    })
 
     /**
      * @param userId         - Identifies a user
@@ -77,7 +107,13 @@ public class ReportQuotaUsage extends VoltProcedure {
      * @return
      * @throws VoltAbortException
      */
-    public VoltTable[] run(long userId, int unitsUsed, int unitsWanted, long inputSessionId, String txnId)
+
+    public VoltTable[] run(
+            @Parameter(in = ParameterIn.PATH, description = "User ID", required = true) @PathParam("userId") long userId,
+            @Parameter(in = ParameterIn.PATH, description = "User ID", required = true) @PathParam("unitsUsed") int unitsUsed,
+            @Parameter(in = ParameterIn.PATH, description = "User ID", required = true) @PathParam("unitsWanted") int unitsWanted,
+            @Parameter(in = ParameterIn.PATH, description = "User ID", required = true) @PathParam("inputSessionId") long inputSessionId,
+            @Parameter(in = ParameterIn.PATH, description = "User ID", required = true) @PathParam("txnId") String txnId)
             throws VoltAbortException {
 
         // Set session ID if needed.
@@ -99,15 +135,15 @@ public class ReportQuotaUsage extends VoltProcedure {
 
         // Sanity check: Does this user exist?
         if (!userTable.advanceRow()) {
-            throw new VoltAbortException("User " + userId + " does not exist");
+            return castObjectToVoltTableArray("User " + userId + " does not exist", 1, "No User");
         }
 
         // Sanity Check: Is this a re-send of a transaction we've already done?
         if (sameTxnTable.advanceRow()) {
             this.setAppStatusCode(ReferenceData.STATUS_TXN_ALREADY_HAPPENED);
-            this.setAppStatusString(
-                    "Event already happened at " + results1[1].getTimestampAsTimestamp("txn_time").toString());
-            return voltExecuteSQL(true);
+            return castObjectToVoltTableArray(
+                    "Event already happened at " + results1[1].getTimestampAsTimestamp("txn_time").toString(), 2,
+                    "Dup");
         }
 
         long amountSpent = unitsUsed * -1;
@@ -130,7 +166,8 @@ public class ReportQuotaUsage extends VoltProcedure {
             voltQueueSQL(getCurrentlyAllocated, userId);
 
             this.setAppStatusCode(ReferenceData.STATUS_OK);
-            return voltExecuteSQL(true);
+            return castObjectToVoltTableArray(new ReportQuotaUsageStatus(ReferenceData.STATUS_OK, voltExecuteSQL(true)),
+                    0, "Called");
         }
 
         VoltTable[] results2 = voltExecuteSQL();
@@ -149,27 +186,29 @@ public class ReportQuotaUsage extends VoltProcedure {
 
         long amountApproved = 0;
 
+        byte statusCode = ReferenceData.STATUS_NO_MONEY;
+
         if (availableCredit < 0) {
 
             decision = decision + "; Negative balance: " + availableCredit;
-            this.setAppStatusCode(ReferenceData.STATUS_NO_MONEY);
 
         } else if (unitsWanted > availableCredit) {
 
             amountApproved = availableCredit;
             decision = decision + "; Allocated " + availableCredit + " units of " + unitsWanted + " asked for";
-            this.setAppStatusCode(ReferenceData.STATUS_SOME_UNITS_ALLOCATED);
+            statusCode = ReferenceData.STATUS_SOME_UNITS_ALLOCATED;
 
         } else {
 
             amountApproved = unitsWanted;
             decision = decision + "; Allocated " + unitsWanted;
-            this.setAppStatusCode(ReferenceData.STATUS_ALL_UNITS_ALLOCATED);
+            statusCode = ReferenceData.STATUS_ALL_UNITS_ALLOCATED;
 
         }
 
         voltQueueSQL(createAllocation, userId, amountApproved, sessionId);
 
+        this.setAppStatusCode(statusCode);
         this.setAppStatusString(decision);
         // Note that transaction is now 'official'
 
@@ -177,7 +216,7 @@ public class ReportQuotaUsage extends VoltProcedure {
         voltQueueSQL(getUserBalance, sessionId, userId);
         voltQueueSQL(getCurrentlyAllocated, userId);
 
-        return voltExecuteSQL();
+        return castObjectToVoltTableArray(new ReportQuotaUsageStatus(statusCode, voltExecuteSQL(true)), 0, "Called");
 
     }
 

@@ -1,5 +1,13 @@
 package chargingdemoprocs;
 
+import java.lang.reflect.Type;
+
+import javax.ws.rs.Consumes;
+import javax.ws.rs.POST;
+import javax.ws.rs.Path;
+import javax.ws.rs.PathParam;
+import javax.ws.rs.Produces;
+
 /* This file is part of VoltDB.
  * Copyright (C) 2008-2022 VoltDB Inc.
  *
@@ -27,8 +35,22 @@ import org.voltdb.SQLStmt;
 import org.voltdb.VoltProcedure;
 import org.voltdb.VoltTable;
 
-public class GetUser extends VoltProcedure {
 
+
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.enums.ParameterIn;
+import io.swagger.v3.oas.annotations.media.ArraySchema;
+import io.swagger.v3.oas.annotations.media.Content;
+import io.swagger.v3.oas.annotations.media.Schema;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import io.swagger.v3.oas.annotations.responses.ApiResponses;
+
+@Path("/getUser")
+
+public class GetUser extends VoltAPIProcedure {
+
+ 
     // @formatter:off
 
 	public static final SQLStmt getUser = new SQLStmt("SELECT * FROM user_table WHERE userid = ?;");
@@ -47,14 +69,29 @@ public class GetUser extends VoltProcedure {
      * @return
      * @throws VoltAbortException
      */
-    public VoltTable[] run(long userId) throws VoltAbortException {
+    @POST
+    @Consumes({ "application/json;charset=utf-8" })
+    @Produces({ "application/json;charset=utf-8" })
+    @Operation(summary = "GetUser", description = "GetUser", tags = { "chargingdemoprocs" })
+    @ApiResponses(value = { 
+            @ApiResponse(responseCode = RESPONSE_VOLT_PROC_OK_STRING, description = "Success", content = @Content(mediaType = "application/json;charset&#x3D;utf-8", array = @ArraySchema(schema = @Schema(implementation = UserObject.class)))),
+            @ApiResponse(responseCode = RESPONSE_VOLT_PROC_OK_STRING, description = "Internal Server Error", content = @Content(mediaType = "application/json;charset&#x3D;utf-8", schema = @Schema(implementation = Error.class))) })
 
+    public VoltTable[] run(
+            @Parameter(in = ParameterIn.PATH, description = "User ID", required = true) @PathParam("userId") long userId)
+            throws VoltAbortException {
+
+ 
         voltQueueSQL(getUser, userId);
         voltQueueSQL(getUserUsage, userId);
         voltQueueSQL(getUserBalance, userId);
         voltQueueSQL(getAllTxn, userId);
+        
+        UserObject u = new UserObject(userId,RESPONSE_VOLT_PROC_OK,voltExecuteSQL(true));
 
-        return voltExecuteSQL(true);
-
+        return castObjectToVoltTableArray(u, RESPONSE_VOLT_PROC_OK, "Locked");
     }
+
+ 
+ 
 }

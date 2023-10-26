@@ -1,5 +1,10 @@
 package chargingdemoprocs;
 
+import javax.ws.rs.Consumes;
+import javax.ws.rs.POST;
+import javax.ws.rs.Path;
+import javax.ws.rs.Produces;
+
 /* This file is part of VoltDB.
  * Copyright (C) 2008-2022 VoltDB Inc.
  *
@@ -24,11 +29,20 @@ package chargingdemoprocs;
  */
 
 import org.voltdb.SQLStmt;
+
 import org.voltdb.VoltProcedure;
 import org.voltdb.VoltTable;
 import org.voltdb.types.TimestampType;
 
-public class UpsertUser extends VoltProcedure {
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.media.Content;
+import io.swagger.v3.oas.annotations.media.Schema;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import io.swagger.v3.oas.annotations.responses.ApiResponses;
+
+@Path("/UpsertUser")
+
+public class UpsertUser extends VoltAPIProcedure {
 
     // @formatter:off
 
@@ -49,6 +63,18 @@ public class UpsertUser extends VoltProcedure {
 
 	// @formatter:on
 
+    @POST
+    @Operation(summary = "UpsertUser", description = "UpsertUser", tags = { "chargingdemoprocs" })
+
+    @Consumes({ "application/json;charset=utf-8" })
+    @Produces({ "application/json;charset=utf-8" })
+    @ApiResponses(value = {
+            @ApiResponse(responseCode = "0", description = "Updated", content = @Content(mediaType = "application/json;charset&#x3D;utf-8", schema = @Schema(implementation = String.class))),
+
+            @ApiResponse(responseCode = "2", description = "Already Done", content = @Content(mediaType = "application/json;charset&#x3D;utf-8", schema = @Schema(implementation = String.class))),
+
+    })
+
     public VoltTable[] run(long userId, long addBalance, String json, String purpose, TimestampType lastSeen,
             String txnId) throws VoltAbortException {
 
@@ -59,37 +85,36 @@ public class UpsertUser extends VoltProcedure {
 
         VoltTable[] results = voltExecuteSQL();
 
+        byte statusCode;
+        String statusString = "";
+
         if (results[1].advanceRow()) {
 
-            this.setAppStatusCode(ReferenceData.STATUS_TXN_ALREADY_HAPPENED);
-            this.setAppStatusString(
-                    "Event already happened at " + results[1].getTimestampAsTimestamp("txn_time").toString());
+            statusString = "Event already happened at " + results[1].getTimestampAsTimestamp("txn_time").toString();
+            statusCode = 2;
 
         } else {
 
             voltQueueSQL(addTxn, userId, txnId, 0, addBalance, "Upsert user");
 
+            statusCode = 0;
             if (!results[0].advanceRow()) {
 
-                final String status = "Created user " + userId + " with opening credit of " + addBalance;
+                statusString = "Created user " + userId + " with opening credit of " + addBalance;
                 voltQueueSQL(insertUser, userId, json, lastSeen);
                 voltQueueSQL(reportAddcreditEvent, userId, addBalance, txnId, "user created");
-                this.setAppStatusCode(ReferenceData.STATUS_OK);
-                this.setAppStatusString(status);
 
             } else {
 
-                final String status = "Updated user " + userId + " - added credit of " + addBalance + "; balance now "
+                statusString = "Updated user " + userId + " - added credit of " + addBalance + "; balance now "
                         + currentBalance;
 
                 voltQueueSQL(reportAddcreditEvent, userId, addBalance, txnId, "user upserted");
-                this.setAppStatusCode(ReferenceData.STATUS_OK);
-                this.setAppStatusString(status);
 
             }
 
         }
-
-        return voltExecuteSQL(true);
+        voltExecuteSQL();
+        return castObjectToVoltTableArray(statusString, statusCode, "");
     }
 }
